@@ -1,4 +1,6 @@
+import Combine
 import CoreData
+import OSLog
 import SwiftUI
 import Swinject
 
@@ -7,7 +9,10 @@ extension AddCarbs {
         let resolver: Resolver
         let editMode: Bool
         let override: Bool
+
         @StateObject var state = StateModel()
+        @StateObject var foodSearchState = FoodSearchStateModel()
+
         @State var dish: String = ""
         @State var isPromptPresented = false
         @State var saved = false
@@ -18,6 +23,22 @@ extension AddCarbs {
         @State private var string = ""
         @State private var newPreset: (dish: String, carbs: Decimal, fat: Decimal, protein: Decimal) = ("", 0, 0, 0)
 
+        // Food Search States
+        @State private var showingFoodSearch = false
+        @State private var showAISettings = false
+        @State private var showingAICamera = false
+        @State private var foodSearchText = ""
+        @State private var searchResults: [FoodItem] = []
+        @State private var isLoading = false
+        @State private var errorMessage: String?
+        @State private var showingBarcodeScanner = false
+
+        init(resolver: Resolver, editMode: Bool, override: Bool) {
+            self.resolver = resolver
+            self.editMode = editMode
+            self.override = override
+        }
+
         @FetchRequest(
             entity: Presets.entity(),
             sortDescriptors: [NSSortDescriptor(key: "dish", ascending: true)], predicate:
@@ -27,7 +48,6 @@ extension AddCarbs {
                     NSPredicate(format: "dish != %@", "Empty" as String)
                 ]
             )
-
         ) var carbPresets: FetchedResults<Presets>
 
         @Environment(\.managedObjectContext) var moc
@@ -42,6 +62,8 @@ extension AddCarbs {
 
         var body: some View {
             Form {
+                foodSearchSection
+
                 if let carbsReq = state.carbsRequired, state.carbs < carbsReq {
                     Section {
                         HStack {
@@ -113,6 +135,7 @@ extension AddCarbs {
                         }
                     }
                 }
+
                 // Optional Hypo Treatment
                 if state.carbs > 0, let profile = state.id, profile != "None", state.carbsRequired != nil {
                     Section {
@@ -152,11 +175,110 @@ extension AddCarbs {
             }
             .navigationTitle("Add Meal")
             .navigationBarTitleDisplayMode(.inline)
-            .navigationBarItems(trailing: Button("Cancel", action: {
-                state.hideModal()
-                if editMode { state.apsManager.determineBasalSync() }
-            }))
+            .navigationBarItems(
+                // leading: foodSearchButton,
+                trailing: Button("Cancel", action: {
+                    state.hideModal()
+                    if editMode { state.apsManager.determineBasalSync() }
+                })
+            )
+            .sheet(isPresented: $showingAICamera) {
+                AICameraView(
+                    onFoodAnalyzed: { _, _ in
+                        Task { @MainActor in
+                            // TODO: Ergebnis in dein StateModel übertragen
+                            showingAICamera = false
+                        }
+                    },
+                    onCancel: { showingAICamera = false }
+                )
+            }
             .sheet(isPresented: $presentPresets, content: { presetView })
+            .sheet(isPresented: $showingFoodSearch) {
+                FoodSearchView(
+                    state: foodSearchState,
+                    onSelect: { selectedFood in
+                        handleSelectedFood(selectedFood)
+                    }
+                )
+            }
+        }
+
+        // MARK: - Helper Functions
+
+        @ViewBuilder private func proteinAndFat() -> some View {
+            HStack {
+                Text("Fat").foregroundColor(.orange)
+                Spacer()
+                DecimalTextField(
+                    "0",
+                    value: $state.fat,
+                    formatter: formatter,
+                    autofocus: false,
+                    liveEditing: true
+                )
+                Text("grams").foregroundColor(.secondary)
+            }
+            HStack {
+                Text("Protein").foregroundColor(.red)
+                Spacer()
+                DecimalTextField(
+                    "0",
+                    value: $state.protein,
+                    formatter: formatter,
+                    autofocus: false,
+                    liveEditing: true
+                )
+                Text("grams").foregroundColor(.secondary)
+            }
+        }
+
+        // MARK: - Food Search Section
+
+        private var foodSearchSection: some View {
+            Section(header: Text("AI Food Search")) {
+                Button {
+                    showingFoodSearch = true
+                } label: {
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                        Text("Search Food Database")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                    }
+                    .foregroundColor(.blue)
+                }
+
+                NavigationLink(destination: AISettingsView()) {
+                    HStack {
+                        Image(systemName: "gearshape")
+                        Text("AI Settings")
+                        Spacer()
+                    }
+                    .foregroundColor(.blue)
+                }
+                .overlay(
+                    Image(systemName: "chevron.right")
+                        .foregroundColor(.blue)
+                        .font(.system(size: 14, weight: .semibold)),
+                    alignment: .trailing
+                )
+            }
+        }
+
+        private var foodSearchButton: some View {
+            Button {
+                showingFoodSearch.toggle()
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.title3)
+            }
+        }
+
+        private func handleSelectedFood(_ food: FoodItem) {
+            state.carbs = food.carbs
+            state.fat = food.fat
+            state.protein = food.protein
         }
 
         private var empty: Bool {
@@ -191,6 +313,30 @@ extension AddCarbs {
                     }
                 }
             }.dynamicTypeSize(...DynamicTypeSize.xxLarge)
+        }
+
+        private var minusButton: some View {
+            Button {
+                state.subtract()
+                if empty {
+                    state.selection = nil
+                    state.combinedPresets = []
+                }
+            }
+            label: { Image(systemName: "minus.circle.fill")
+            }
+            .buttonStyle(.borderless)
+            .disabled(state.selection == nil)
+        }
+
+        private var plusButton: some View {
+            Button {
+                state.plus()
+            }
+            label: { Image(systemName: "plus.circle.fill")
+            }
+            .buttonStyle(.borderless)
+            .disabled(state.selection == nil)
         }
 
         private var presetView: some View {
@@ -245,72 +391,9 @@ extension AddCarbs {
             .environment(\.colorScheme, colorScheme)
         }
 
-        private var editView: some View {
-            Form {
-                Section {
-                    HStack {
-                        TextField("", text: $newPreset.dish)
-                    }
-                    HStack {
-                        Text("Carbs").foregroundStyle(.secondary)
-                        Spacer()
-                        DecimalTextField("0", value: $newPreset.carbs, formatter: formatter, liveEditing: true)
-                    }
-                    HStack {
-                        Text("Fat").foregroundStyle(.secondary)
-                        Spacer()
-                        DecimalTextField("0", value: $newPreset.fat, formatter: formatter, liveEditing: true)
-                    }
-                    HStack {
-                        Text("Protein").foregroundStyle(.secondary)
-                        Spacer()
-                        DecimalTextField("0", value: $newPreset.protein, formatter: formatter, liveEditing: true)
-                    }
-                } header: { Text("Saved Food") }
-
-                Section {
-                    Button { save() }
-                    label: { Text("Save") }
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .listRowBackground(!disabled ? Color(.systemBlue) : Color(.systemGray4))
-                        .tint(.white)
-                        .disabled(disabled)
-                }
-            }.environment(\.colorScheme, colorScheme)
-        }
-
-        @ViewBuilder private func proteinAndFat() -> some View {
-            HStack {
-                Text("Fat").foregroundColor(.orange)
-                Spacer()
-                DecimalTextField(
-                    "0",
-                    value: $state.fat,
-                    formatter: formatter,
-                    autofocus: false,
-                    liveEditing: true
-                )
-                Text("grams").foregroundColor(.secondary)
-            }
-            HStack {
-                Text("Protein").foregroundColor(.red)
-                Spacer()
-                DecimalTextField(
-                    "0",
-                    value: $state.protein,
-                    formatter: formatter,
-                    autofocus: false,
-                    liveEditing: true
-                ).foregroundColor(.loopRed)
-
-                Text("grams").foregroundColor(.secondary)
-            }
-        }
-
         @ViewBuilder private func presetsList(for preset: Presets) -> some View {
             let dish = preset.dish ?? ""
 
-            // Only list saved entries
             if !preset.hasChanges {
                 HStack {
                     VStack(alignment: .leading) {
@@ -345,30 +428,6 @@ extension AddCarbs {
             }
         }
 
-        private var minusButton: some View {
-            Button {
-                state.subtract()
-                if empty {
-                    state.selection = nil
-                    state.combinedPresets = []
-                }
-            }
-            label: { Image(systemName: "minus.circle.fill")
-            }
-            .buttonStyle(.borderless)
-            .disabled(state.selection == nil)
-        }
-
-        private var plusButton: some View {
-            Button {
-                state.plus()
-            }
-            label: { Image(systemName: "plus.circle.fill")
-            }
-            .buttonStyle(.borderless)
-            .disabled(state.selection == nil)
-        }
-
         private func delete(at offsets: IndexSet) {
             for index in offsets {
                 let preset = carbPresets[index]
@@ -377,7 +436,7 @@ extension AddCarbs {
             do {
                 try moc.save()
             } catch {
-                // To do: add error
+                // Error handling
             }
         }
 
@@ -398,7 +457,7 @@ extension AddCarbs {
             if moc.hasChanges {
                 do {
                     try moc.save()
-                } catch { /* To do: add error */ }
+                } catch {}
             }
             state.edit = false
         }
@@ -418,14 +477,141 @@ extension AddCarbs {
         private func reset() {
             presentPresets = false
             string = ""
-            state.presetToEdit = nil // Probably not needed
-            state.edit = false // Probably not needed
         }
 
         private var disabled: Bool {
             (newPreset == (NSLocalizedString("New", comment: ""), 0, 0, 0)) || (newPreset.dish == "") ||
                 (newPreset.carbs + newPreset.fat + newPreset.protein <= 0)
         }
+
+        private var editView: some View {
+            Form {
+                Section {
+                    HStack {
+                        TextField("", text: $newPreset.dish)
+                    }
+                    HStack {
+                        Text("Carbs").foregroundStyle(.secondary)
+                        Spacer()
+                        DecimalTextField("0", value: $newPreset.carbs, formatter: formatter, liveEditing: true)
+                    }
+                    HStack {
+                        Text("Fat").foregroundStyle(.secondary)
+                        Spacer()
+                        DecimalTextField("0", value: $newPreset.fat, formatter: formatter, liveEditing: true)
+                    }
+                    HStack {
+                        Text("Protein").foregroundStyle(.secondary)
+                        Spacer()
+                        DecimalTextField("0", value: $newPreset.protein, formatter: formatter, liveEditing: true)
+                    }
+                } header: { Text("Saved Food") }
+
+                Section {
+                    Button { save() }
+                    label: { Text("Save") }
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .listRowBackground(!disabled ? Color(.systemBlue) : Color(.systemGray4))
+                        .tint(.white)
+                        .disabled(disabled)
+                }
+            }.environment(\.colorScheme, colorScheme)
+        }
+    }
+}
+
+private func searchFoodProducts(query: String) async throws -> [FoodItem] {
+    print("🔍 Starting search for: '\(query)'")
+    let openFoodProducts = try await FoodSearchRouter.shared.searchFoodsByText(query)
+
+    return openFoodProducts.map { openFoodProduct in
+        FoodItem(
+            name: openFoodProduct.productName ?? "Unknown",
+            carbs: Decimal(openFoodProduct.nutriments.carbohydrates),
+            fat: Decimal(openFoodProduct.nutriments.fat ?? 0),
+            protein: Decimal(openFoodProduct.nutriments.proteins ?? 0),
+            source: openFoodProduct.brands ?? "OpenFoodFacts"
+        )
+    }
+}
+
+private func searchOpenFoodFactsByBarcode(_ barcode: String) async throws -> [FoodItem] {
+    let urlString = "https://world.openfoodfacts.org/api/v2/product/\(barcode).json"
+    print("🌐 OpenFoodFacts API Call: \(urlString)")
+
+    guard let url = URL(string: urlString) else {
+        throw NSError(domain: "OpenFoodFactsError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
+    }
+
+    let (data, response) = try await URLSession.shared.data(from: url)
+
+    guard let httpResponse = response as? HTTPURLResponse else {
+        throw NSError(domain: "OpenFoodFactsError", code: 2, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
+    }
+
+    guard httpResponse.statusCode == 200 else {
+        print("❌ OpenFoodFacts API Error: Status \(httpResponse.statusCode)")
+        return [] // Leeres Array für "nicht gefunden"
+    }
+
+    // Parse die Response
+    let productResponse = try JSONDecoder().decode(OpenFoodFactsProductResponse.self, from: data)
+
+    if productResponse.status == 1, let product = productResponse.product {
+        // Produkt gefunden
+        let foodItem = FoodItem(
+            name: product.productName ?? "Unknown",
+            carbs: Decimal(product.nutriments.carbohydrates),
+            fat: Decimal(product.nutriments.fat ?? 0),
+            protein: Decimal(product.nutriments.proteins ?? 0),
+            source: product.brands ?? "OpenFoodFacts"
+        )
+        return [foodItem]
+    } else {
+        // Kein Produkt gefunden
+        print("ℹ️ OpenFoodFacts: No product found for barcode \(barcode)")
+        return []
+    }
+}
+
+private func searchFoodProducts(query: String, completion: @escaping ([AIFoodItem]) -> Void) async throws -> [FoodItem] {
+    do {
+        print("🔍 Starting AI search for: '\(query)'")
+
+        // Use the FoodSearchRouter to handle the search
+        let openFoodProducts = try await FoodSearchRouter.shared.searchFoodsByText(query)
+
+        print("✅ AI search completed, found \(openFoodProducts.count) products")
+
+        // Konvertiert OpenFoodFactsProduct zu AIFoodItem
+        let aiProducts = openFoodProducts.map { openFoodProduct in
+            AIFoodItem(
+                name: openFoodProduct.productName ?? "Unknown",
+                brand: openFoodProduct.brands,
+                calories: 0,
+                carbs: openFoodProduct.nutriments.carbohydrates,
+                protein: openFoodProduct.nutriments.proteins ?? 0,
+                fat: openFoodProduct.nutriments.fat ?? 0
+            )
+        }
+
+        // Rückgabe der AI-Ergebnisse via Completion Handler
+        completion(aiProducts)
+
+        // Konvertiere zu FoodItem für Rückgabe
+        return openFoodProducts.map { openFoodProduct in
+            FoodItem(
+                name: openFoodProduct.productName ?? "Unknown",
+                carbs: Decimal(openFoodProduct.nutriments.carbohydrates),
+                fat: Decimal(openFoodProduct.nutriments.fat ?? 0),
+                protein: Decimal(openFoodProduct.nutriments.proteins ?? 0),
+                source: openFoodProduct.brands ?? "OpenFoodFacts"
+            )
+        }
+    } catch {
+        print("❌ AI Search failed: \(error.localizedDescription)")
+        completion([])
+        return []
     }
 }
 
