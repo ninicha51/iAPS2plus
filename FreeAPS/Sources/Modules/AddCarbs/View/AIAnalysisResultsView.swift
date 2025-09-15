@@ -9,7 +9,7 @@ struct AIAnalysisResultsView: View {
         VStack(alignment: .leading, spacing: 20) {
             // Header mit Gesamtübersicht
             VStack(alignment: .leading, spacing: 12) {
-                Text("🧠 AI Lebensmittelanalyse")
+                Text("🧠 AI food analysis")
                     .font(.title2)
                     .fontWeight(.bold)
 
@@ -21,11 +21,11 @@ struct AIAnalysisResultsView: View {
 
                 // Konfidenz-Level
                 HStack {
-                    Text("Konfidenz:")
+                    Text("Confidence:")
                     ConfidenceBadge(level: analysisResult.confidence)
                     Spacer()
                     if let portions = analysisResult.totalFoodPortions {
-                        Text("\(portions) Portionen")
+                        Text("\(portions) Portions")
                             .font(.caption)
                     }
                 }
@@ -36,7 +36,7 @@ struct AIAnalysisResultsView: View {
             // Gesamt-Nährwerte der Mahlzeit
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
-                    Text("📊 Gesamtnährwerte der Mahlzeit")
+                    Text("📊 Total nutritional values of the meal")
                         .font(.headline)
 
                     Spacer()
@@ -44,15 +44,15 @@ struct AIAnalysisResultsView: View {
                     // ERWEITERTER Gesamtmahlzeit-Button (HIER EINFÜGEN)
                     Button(action: {
                         let mealName = analysisResult.foodItemsDetailed.count == 1 ?
-                            analysisResult.foodItemsDetailed.first?.name ?? "Mahlzeit" :
-                            "Komplette Mahlzeit"
+                            analysisResult.foodItemsDetailed.first?.name ?? "Meal" :
+                            "Complete Meal"
 
                         let totalMeal = FoodItem(
                             name: mealName,
                             carbs: Decimal(analysisResult.totalCarbohydrates),
                             fat: Decimal(analysisResult.totalFat ?? 0),
                             protein: Decimal(analysisResult.totalProtein ?? 0),
-                            source: "AI Gesamtanalyse • \(analysisResult.foodItemsDetailed.count) Lebensmittel"
+                            source: "AI food analysis • \(analysisResult.foodItemsDetailed.count) Food"
                         )
                         onCompleteMealSelected(totalMeal)
                     }) {
@@ -60,10 +60,10 @@ struct AIAnalysisResultsView: View {
                             Image(systemName: "plus.circle.fill")
                                 .foregroundColor(.green)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Gesamt hinzufügen")
+                                Text("Add Total")
                                     .font(.subheadline)
                                     .fontWeight(.medium)
-                                Text("\(analysisResult.foodItemsDetailed.count) Lebensmittel")
+                                Text("\(analysisResult.foodItemsDetailed.count) Foods")
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
                             }
@@ -80,7 +80,7 @@ struct AIAnalysisResultsView: View {
                     NutritionSummaryBadge(
                         value: analysisResult.totalCarbohydrates,
                         unit: "g",
-                        label: "Kohlenhydrate",
+                        label: "Carbs",
                         color: .blue
                     )
 
@@ -89,19 +89,19 @@ struct AIAnalysisResultsView: View {
                     }
 
                     if let fat = analysisResult.totalFat {
-                        NutritionSummaryBadge(value: fat, unit: "g", label: "Fett", color: .orange)
+                        NutritionSummaryBadge(value: fat, unit: "g", label: "Fat", color: .orange)
                     }
 
                     if let fiber = analysisResult.totalFiber {
-                        NutritionSummaryBadge(value: fiber, unit: "g", label: "Ballaststoffe", color: .purple)
+                        NutritionSummaryBadge(value: fiber, unit: "g", label: "Fiber", color: .purple)
                     }
 
                     if let calories = analysisResult.totalCalories {
-                        NutritionSummaryBadge(value: calories, unit: "kcal", label: "Kalorien", color: .red)
+                        NutritionSummaryBadge(value: calories, unit: "kcal", label: "Calories", color: .red)
                     }
 
                     if let servings = analysisResult.totalUsdaServings {
-                        NutritionSummaryBadge(value: servings, unit: "", label: "USDA Portionen", color: .indigo)
+                        NutritionSummaryBadge(value: servings, unit: "", label: "USDA Servings", color: .indigo)
                     }
                 }
             }
@@ -111,7 +111,7 @@ struct AIAnalysisResultsView: View {
             .padding(.horizontal)
 
             // Einzelne Lebensmittel
-            Text("🍽️ Einzelne Lebensmittel")
+            Text("🍽️ Individual Foods")
                 .font(.headline)
                 .padding(.horizontal)
 
@@ -134,7 +134,7 @@ struct AIAnalysisResultsView: View {
             // Diabetes-spezifische Empfehlungen
             if let diabetesInfo = analysisResult.diabetesConsiderations {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("💉 Diabetes Empfehlungen", systemImage: "cross.case.fill")
+                    Label("💉 Diabetes Recommendations", systemImage: "cross.case.fill")
                         .font(.headline)
                     Text(diabetesInfo)
                         .font(.subheadline)
@@ -148,7 +148,7 @@ struct AIAnalysisResultsView: View {
             // Zusätzliche Hinweise
             if let notes = analysisResult.notes {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("📝 Hinweise", systemImage: "note.text")
+                    Label("📝 Notes", systemImage: "note.text")
                         .font(.headline)
                     Text(notes)
                         .font(.subheadline)
